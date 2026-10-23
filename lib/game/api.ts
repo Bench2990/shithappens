@@ -21,6 +21,7 @@ export async function executeAction(action: GameAction): Promise<void> {
       case "rate": return client.rpc("rate_round", { p_game_id, p_round_id: action.roundId, p_score: action.score });
       case "select": return client.rpc("select_placement", { p_game_id, p_round_id: action.roundId, p_position: action.position });
       case "finalize": return client.rpc("finalize_placement", { p_game_id, p_round_id: action.roundId });
+      case "cancel": return client.rpc("cancel_game", { p_game_id });
       case "restart": return client.rpc("restart_game", { p_game_id });
     }
   })();

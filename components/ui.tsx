@@ -2,7 +2,7 @@ import { LoaderCircle, X } from "lucide-react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
 export function Button({ busy, children, className = "", variant = "primary", disabled, ...props }:
-  ButtonHTMLAttributes<HTMLButtonElement> & { busy?: boolean; variant?: "primary" | "secondary" | "lime" }) {
+  ButtonHTMLAttributes<HTMLButtonElement> & { busy?: boolean; variant?: "primary" | "secondary" | "lime" | "danger" }) {
   return (
     <button className={`button button-${variant} ${className}`} disabled={disabled || busy} aria-busy={busy || undefined} {...props}>
       {busy && <LoaderCircle className="size-4 shrink-0 animate-spin" aria-hidden="true" />}

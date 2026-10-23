@@ -56,7 +56,7 @@ export interface GameState {
     starting_player_id: string | null;
     current_player_id: string | null;
     winner_id: string | null;
-    end_reason: "winner" | "exhausted" | null;
+    end_reason: "winner" | "exhausted" | "cancelled" | null;
     round_number: number;
   };
   players: Player[];
@@ -64,6 +64,7 @@ export interface GameState {
   initial_card: { id: string; order: number; event: GameEvent } | null;
   current_round: CurrentRound | null;
   latest_result: RoundResult | null;
+  cancellation: { game_id: string; nickname: string; cancelled_at: string } | null;
 }
 
 export type GameAction =
@@ -73,6 +74,7 @@ export type GameAction =
   | { type: "rate"; gameId: string; roundId: string; score: number }
   | { type: "select"; gameId: string; roundId: string; position: number }
   | { type: "finalize"; gameId: string; roundId: string }
+  | { type: "cancel"; gameId: string }
   | { type: "restart"; gameId: string };
 
 export type ConnectionState = "connecting" | "live" | "reconnecting" | "offline";

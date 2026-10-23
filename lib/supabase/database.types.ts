@@ -20,6 +20,7 @@ export interface Database {
       rate_round: { Args: { p_game_id: string; p_round_id: string; p_score: number }; Returns: undefined };
       select_placement: { Args: { p_game_id: string; p_round_id: string; p_position: number }; Returns: undefined };
       finalize_placement: { Args: { p_game_id: string; p_round_id: string }; Returns: undefined };
+      cancel_game: { Args: { p_game_id: string }; Returns: string };
       restart_game: { Args: { p_game_id: string }; Returns: string };
     };
     Enums: Record<string, never>;

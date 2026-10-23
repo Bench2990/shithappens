@@ -1,7 +1,7 @@
 import { PGlite } from "@electric-sql/pglite";
 import type { BrowserContext, WebSocketRoute } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import type { GameState } from "../../lib/game/types";
 import events from "../../data/events.hu.json" with { type: "json" };
 
@@ -9,7 +9,7 @@ import events from "../../data/events.hu.json" with { type: "json" };
 // A teljes játékmotor és a jogosultságellenőrzés itt is az eredeti SQL.
 type Message = { topic: string; event: string; payload: Record<string, unknown>; ref: string | null; join_ref?: string | null };
 type Socket = { ws: WebSocketRoute; topic: string; joinRef: string | null; array: boolean; userId: string };
-const allowed = new Set(["get_game_state", "join_game", "start_game", "rate_initial_card", "rate_round", "select_placement", "finalize_placement", "restart_game"]);
+const allowed = new Set(["get_game_state", "join_game", "start_game", "rate_initial_card", "rate_round", "select_placement", "finalize_placement", "restart_game", "cancel_game"]);
 
 export class SupabaseBrowserHarness {
   db = new PGlite();
@@ -27,7 +27,9 @@ export class SupabaseBrowserHarness {
         $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
       grant usage on schema public, auth to anon, authenticated, service_role;
     `);
-    await this.db.exec(await readFile("supabase/migrations/202610200001_game.sql", "utf8"));
+    for (const file of (await readdir("supabase/migrations")).filter((name) => name.endsWith(".sql")).sort()) {
+      await this.db.exec(await readFile(`supabase/migrations/${file}`, "utf8"));
+    }
     await this.db.query(`insert into public.events (title, description, active)
       select title, description, active from jsonb_to_recordset($1::jsonb) as e(title text, description text, active boolean)`, [JSON.stringify(events)]);
   }

@@ -52,6 +52,8 @@ button:disabled { cursor: not-allowed; }
 .button-lime:hover:not(:disabled) { background: #c9e666; }
 .button-secondary { background: transparent; color: var(--color-ink); border-color: var(--color-line); }
 .button-secondary:hover:not(:disabled) { background: #eae7e0; }
+.button-danger { background: #ae302d; color: white; }
+.button-danger:hover:not(:disabled) { background: #922522; }
 .panel { border: 1px solid var(--color-line); border-radius: 24px; background: #fffefa; }
 .eyebrow { font-size: 11px; line-height: 1.5; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
 .score { font-variant-numeric: tabular-nums; letter-spacing: -.06em; font-weight: 900; }

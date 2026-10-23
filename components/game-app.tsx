@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { isSupabaseConfigured } from "@/lib/supabase/client";
 import { useGame } from "@/lib/game/use-game";
 import type { ConnectionState, GameAction, GameState } from "@/lib/game/types";
+import { CancelGame } from "./cancel-game";
 import { EventCard } from "./event-card";
 import { Hand } from "./hand";
 import { JoinScreen } from "./join-screen";
@@ -44,6 +45,7 @@ function Setup() {
 function Lobby({ state, act, disabled, pending }: { state: GameState; act: Act; disabled: boolean; pending: GameAction["type"] | null }) {
   const enoughEvents = state.events_available >= state.events_required;
   return <div className="enter mx-auto max-w-2xl">
+    {state.cancellation && <p role="status" className="mb-5 rounded-2xl bg-lilac/25 p-4 text-sm leading-relaxed">A partit megszakította: {state.cancellation.nickname}. Visszatértetek a lobbyba.</p>}
     <SectionHeading label="01 / A vihar előtti csend" title="Mindenki itt van?">Szóljatok egymásnak, ha készen álltok. Bárki indíthat; nem kell pontosan hatan lennetek.</SectionHeading>
     <Players state={state} lobby />
     <div className="mt-5 rounded-2xl border border-line p-5"><h2 className="mb-3 flex items-center gap-2 text-sm font-extrabold"><CircleHelp className="size-4" aria-hidden="true" />Egy percben a szabályok</h2><ol className="list-decimal space-y-2 pl-4 text-sm leading-relaxed text-muted"><li>Három saját lapot pontozol, 1-től 100-ig.</li><li>A körödben te elhelyezel, mindenki más titokban pontoz.</li><li>Az átlag dönti el, jó helyre tetted-e. Az első 10 lapos nyer.</li></ol></div>
@@ -130,6 +132,7 @@ export function GameApp() {
     {connection === "offline" && <div className="mb-5 rounded-xl bg-coral/35 p-4 text-sm leading-relaxed" role="status">Megszakadt a kapcsolat. A lapjaid megmaradnak; visszacsatlakozáskor automatikusan szinkronizálunk.</div>}
     {game.error && <ErrorBanner message={game.error} onDismiss={game.clearError} />}
     {game.syncError && <div><ErrorBanner message={game.syncError} /><Button className="mb-5" variant="secondary" onClick={() => { void game.refresh(); }}>Kapcsolat újrapróbálása</Button></div>}
+    {state?.me_id && (state.game.status === "initial_rating" || state.game.status === "playing") && <CancelGame key={state.game.id} gameId={state.game.id} act={act} disabled={disabled} pending={pending} error={game.error} />}
     {!state ? <div className="flex min-h-72 flex-col items-center justify-center gap-4 text-center" role="status"><LoaderCircle className="size-8 animate-spin text-[#8061af]" aria-hidden="true" /><h1 className="text-xl font-black">Visszatérés az asztalhoz...</h1><p className="text-sm text-muted">A böngésződ megőrzi a névtelen azonosítódat.</p></div>
       : !state.me_id ? <JoinScreen key={state.game.id} state={state} disabled={disabled} busy={pending === "join"} onJoin={(name) => { void act({ type: "join", gameId: state.game.id, nickname: name }); }} />
         : screenProps && state.game.status === "lobby" ? <Lobby {...screenProps} />

@@ -46,13 +46,16 @@ Nem kell manuálisan Auth-felhasználókat létrehoznod. A kliens névtelen munk
 
 ### Dashboardból, CLI nélkül
 
-Nyisd meg a **SQL Editor** felületet, és futtasd a teljes fájlt adminisztrátori / `postgres` szerepkörben, egyszer:
+Új, üres adatbázisnál nyisd meg a **SQL Editor** felületet, és futtasd a teljes fájlokat adminisztrátori / `postgres` szerepkörben, egyszer, ebben a sorrendben:
 
 ```text
 supabase/migrations/202610200001_game.sql
+supabase/migrations/202610230001_cancel_game.sql
 ```
 
-Ez hozza létre az összes táblát, indexet, megszorítást, RLS-t, RPC-t, az első üres lobbit és a Realtime publikációhoz tartozó beállítást. A fájl üres projektre készült, nem többször futtatandó seed. Hibánál ne csak a kijelölt fél fájlt futtasd.
+Az első migráció hozza létre az összes táblát, indexet, megszorítást, RLS-t, RPC-t, az első üres lobbit és a Realtime publikációhoz tartozó beállítást. Üres projektre készült, nem többször futtatandó seed. Hibánál ne csak a kijelölt fél fájlt futtasd.
+
+**Már működő, adatokat tartalmazó adatbázisnál kizárólag az új `202610230001_cancel_game.sql` migrációt futtasd**, az új frontend telepítése előtt. Ez egy tranzakcióban bővíti az `end_reason` CHECK constraintet a `cancelled` értékkel, hozzáadja a megszakítás metaadatait és a jogosultságellenőrzött `cancel_game` RPC-t, illetve frissíti az állapotlekérést. Nem töröl játékot, játékost, kártyát, kört, értékelést vagy eseményt; nem kell újra seedelni, és nem kell `db reset`. A korábbi migráció változatlan marad.
 
 ### Supabase CLI-vel
 
@@ -151,6 +154,12 @@ A szerver `0.0.0.0:3000` címen figyel. Azonos Wi-Fi-n a telefonokon a gép LAN-
 
 Minden játékosnak külön böngészőprofil vagy külön telefon kell. Ugyanannak a böngészőprofilnak két lapja **ugyanaz a játékos**. Újratöltés, rövid kapcsolatvesztés vagy a telefon képernyőjének lezárása nem törli a lapokat. Ne töröld a webhelyadatokat, és ne válts inkognitóból normál módra: a névtelen Auth-azonosító elvesztésével a régi játékos nem állítható vissza pusztán a becenévvel.
 
+### Folyamatban lévő parti megszakítása
+
+A kezdőkártyák értékelése, a normál kör és a többiekre várakozás közben minden résztvevő látja a diszkrét, legalább 44 px magas **Játék megszakítása** gombot. A megerősítő ablakban a **Mégse** vagy az Escape semmit nem változtat; a piros **Játék megszakítása** archiválja a partit, és minden résztvevőt automatikusan ugyanabba az új, üres lobbyba visz, a becenevek és Auth-munkamenetek megtartásával. A lobby rövid üzenetben megnevezi a kezdeményezőt.
+
+Innen bárki indíthat új partit, fejenként három új, még nem pontozott kezdőlappal. A régi lapok, pontszámok, elhelyezések és köreredmények nem kerülnek át. A normál győzelem vagy paklielfogyás utáni újracsatlakozási folyamat változatlan.
+
 ## 7. Vercel telepítés
 
 1. Tedd a projektet egy saját Git-repositoryba, és importáld a [Vercelen](https://vercel.com/new), vagy a Vercel CLI-vel ebből a könyvtárból telepíts.
@@ -175,9 +184,11 @@ npm start
 
 ### Automatikus adatbázistesztek
 
-A Vitest a **tényleges SQL-migrációt** tölti be a PGlite PostgreSQL 17 motorjába. A Supabase Auth `auth.uid()` függvényének és szerepköreinek minimális tesztkörnyezete helyi, a játéklogika nem mock vagy külön TypeScript-másolat. Docker és külső kulcs nélkül fut.
+A Vitest a **tényleges SQL-migrációkat, sorrendben** tölti be a PGlite PostgreSQL 17 motorjába. A Supabase Auth `auth.uid()` függvényének és szerepköreinek minimális tesztkörnyezete helyi, a játéklogika nem mock vagy külön TypeScript-másolat. Docker és külső kulcs nélkül fut.
 
 Lefedettség: pontos átlag és félérték-kerekítés; helyes/hibás elhelyezés és egyező pontok; kezdőkártyák egyedisége és véglegessége; lobbyzár; szerepkörök és nyers hozzáférés tiltása; titkos átlag; ismételt indítás/pontozás/véglegesítés; fix körsorrend; visszaolvasás; hibás lap újrahúzása új pontozással; teljes hatfős parti a 10. lapig; paklielfogyás; ismételt újraindítás és megőrzött előzmények.
+
+A megszakítás tesztjei ellenőrzik a közös lobbyt és a megőrzött neveket, a kezdőpontozást és várakozást, az aktív játékos és a pontozó jogosultságát, a kívülállók kizárását, az ismételt/párhuzamos kéréseket, a tiszta háromlapos új partit, a késő régi kérések elutasítását, a hibánál teljes tranzakció-visszagördítést és a már adatokat tartalmazó régi sémára alkalmazott új migrációt.
 
 A PGlite egy adatbázis-kapcsolatot sorosít: az idempotenciát és a SQL-logikát ellenőrzi, **nem helyettesíti a külön PostgreSQL-kapcsolatok valós zárversenyét vagy a Supabase Realtime szerverét**.
 
@@ -189,6 +200,8 @@ npm run test:browser
 ```
 
 Két külön, mobilméretű Chromium-profilban ellenőrzi a lobby frissülését, a csúszkát, a kezdőpontozást, a gombok feltételeit, a pozíció megőrzését újratöltéskor, az eredmény felfedését, az offline visszatérést, a későn érkezők kizárását, a kilenclapos kártyasor tíz választható helyét, a győzelmi képernyőt és az új partit. A játékmotor itt is a valódi SQL-migráció PGlite-on; **csak az Auth/HTTP/WebSocket szállítás tesztadapteres**, nem éles Supabase. A teszt automatikusan külön Next.js szervert indít a 3100-as porton, tesztkörnyezeti változókkal. A `test-results/` mappába mobil- és asztali képernyőképeket ír.
+
+A külön megszakítási böngészőteszt 320 px széles telefonokon ellenőrzi a megerősítő ablakot, a fókuszt és az Escape/Mégse működését, a kezdőpontozás és a normál kör megszakítását, a másik eszköz automatikus lobbyváltását (akkor is, ha ott is nyitva van az ablak), a megőrzött neveket, az új kezdőlapokat és a két egyszerre elküldött megszakítást.
 
 ### Opcionális élő, hatklienses Supabase-teszt
 
@@ -213,6 +226,9 @@ Ez hat valódi névtelen felhasználót és hat Realtime-feliratkozást indít. 
 - Körzárás előtt a böngésző hálózati válaszában sincs más értékelése vagy átlag.
 - Véglegesítés után mindenkinél ott a teljes név/pontszám táblázat és már fut a következő kör. Az eredménypanel összecsukható, nem kér közös jóváhagyást.
 - Próbálj szándékosan rossz helyet, pontazonosságot, frissítést és repülő módot.
+- Kezdőpontozáskor, kész kezdőlapokkal várakozva, aktív játékosként és beküldött pontszámmal is próbáld a megszakítást; Mégse után ne változzon semmi.
+- Megerősített megszakításkor minden telefon automatikusan ugyanabba a lobbyba kerüljön, megőrzött nevekkel és a kezdeményezőt megnevező üzenettel. A másik játékos indítson új partit: újra három pontozatlan kezdőlapot kapjon mindenki.
+- Két telefonról egyszerre erősítsétek meg a megszakítást: csak egy új lobby jöhet létre.
 - A 10. lap lezárja a játékot; az új várót megnyitó bent van, a többiek újra csatlakoznak.
 
 **Telepítési korlát:** Supabase- és Vercel-hozzáférés nélkül az éles telepítést és a telefonok közötti külső Realtime-kapcsolatot nem lehet igazolni. A projekt nem állítja, hogy ezek konfiguráció nélkül már létrejöttek.
@@ -227,8 +243,9 @@ Ez hat valódi névtelen felhasználót és hat Realtime-feliratkozást indít. 
 - A nyitott kör átlagát az adatbázis már az utolsó értékeléskor kiszámolja, de **sem a snapshot, sem a Realtime nem küldi el**. A pontozó a saját már beadott pontját visszakapja, másét csak lezárás után. Az aktív játékos a saját körében nem pontozhat.
 - Pontszámok **egész tizedpontok**: `67,4 = 674`. Az átlag PostgreSQL `numeric` művelettel kerekül, nem lebegőpontos számmal. A széleken és azonos pontoknál a szomszédos `≤` feltételek érvényesek.
 - A kezdőpontozás végén az utolsó értékelést mentő tranzakció kezdi az első kört. Körzáráskor azonnal elindul a következő; az előző eredmény külön panelben marad a következő lezárásig, újratöltés után is. A történeti értékelések megmaradnak az adatbázisban.
-- Nincs automatikus játékostörlés, automatikus új játék vagy távolléti időkorlát. Egy hosszabban eltűnő résztvevőre vár a társaság; ezt szándékosan nem helyettesíti bot, automatikus pontozás vagy kihagyás.
-- Új játék csak lezárt parti után nyitható. Friss lobby készül új kártyák nélkül, csak a kezdeményezővel; a többiek újra csatlakoznak. Így egy már távozott játékos nem ragad automatikusan az új névsorban. A korábbi játék, lapok, körök, pontozások és az eseménygyűjtemény megmaradnak.
+- Nincs automatikus játékostörlés, automatikus partiindítás vagy távolléti időkorlát. Egy hosszabban eltűnő résztvevőre vár a társaság; ezt szándékosan nem helyettesíti bot, automatikus pontozás vagy kihagyás. Szükség esetén bármely résztvevő megszakíthatja a partit.
+- Győzelem vagy paklielfogyás után a kézzel megnyitott friss lobby csak a kezdeményezőt tartalmazza; a többiek újra csatlakoznak. **Megszakításkor viszont minden résztvevőt automatikusan átmásolunk**, azonos Auth-felhasználóval, becenévvel és sorrenddel, de új, partihoz kötött játékosazonosítóval. Mindkét esetben megmarad minden korábbi játék, lap, kör, pontozás és az eseménygyűjtemény.
+- A `cancel_game` a többi RPC-vel közös `room_state` sorzár alatt, egy tranzakcióban archivál és vált lobbyt. A `games.cancelled_from_game_id` egyedi hivatkozása és a már megszakított kérés hatástalan ismétlése kizárja a dupla lobbyt; régi játékazonosítók nem írhatnak az új partiba. A Realtime-változásjelző továbbra sem tartalmaz becenevet vagy más játékadatot.
 - A névtelen Auth-felhasználókat játék közben ne töröld vagy takarítsd automatikusan; a történeti `players` sorok hivatkoznak rájuk. A kulcs és a kliensoldali becenévtipp nem helyettesíti az Auth-munkamenetet.
 - Nincs adminfelület. Eseményt a Dashboard Table Editorban vagy importtal szerkeszthetsz; a már hivatkozott eseményeket törlés helyett `active = false` értékkel kapcsold ki. A mintafájl újraimportja az abban szereplő címeket és aktív állapotukat is frissíti.
 
