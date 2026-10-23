@@ -9,7 +9,7 @@ import events from "../../data/events.hu.json" with { type: "json" };
 // A teljes játékmotor és a jogosultságellenőrzés itt is az eredeti SQL.
 type Message = { topic: string; event: string; payload: Record<string, unknown>; ref: string | null; join_ref?: string | null };
 type Socket = { ws: WebSocketRoute; topic: string; joinRef: string | null; array: boolean; userId: string };
-const allowed = new Set(["get_game_state", "join_game", "start_game", "rate_initial_card", "rate_round", "select_placement", "finalize_placement", "restart_game", "cancel_game"]);
+const allowed = new Set(["get_game_state", "join_game", "leave_lobby", "reset_lobby", "start_game", "rate_initial_card", "rate_round", "select_placement", "finalize_placement", "restart_game", "cancel_game"]);
 
 export class SupabaseBrowserHarness {
   db = new PGlite();

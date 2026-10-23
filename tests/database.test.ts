@@ -214,6 +214,255 @@ describe("Lobby és kezdőkártyák", () => {
   });
 });
 
+describe("Lobby elhagyása és üres lobby létrehozása", () => {
+  it("háromból csak a kilépőt távolítja el, aki ugyanazzal az Auth-felhasználóval új néven csatlakozhat", async () => {
+    const gameId = await join(3);
+    const before = await state();
+    const args = { p_game_id: gameId, p_player_id: before.players[1].id };
+    await rpc(1, "leave_lobby", args);
+    for (const actor of [0, 2]) {
+      const current = await state(actor);
+      expect(current.game.id).toBe(gameId);
+      expect(current.me_id).toBe(before.players[actor].id);
+      expect(current.players).toEqual(before.players.filter((_, i) => i !== 1));
+      expect(current.revision).toBe(before.revision + 1);
+    }
+    const left = await state(1);
+    expect(left.me_id).toBeNull();
+    expect(left.player_count).toBe(2);
+    expect(left.my_cards).toEqual([]);
+    await rpc(1, "join_game", { p_game_id: gameId, p_nickname: "Új becenév" });
+    const rejoined = await state(1);
+    expect(rejoined.me_id).not.toBe(args.p_player_id);
+    expect(rejoined.players.map((p) => p.nickname)).toEqual(["Játékos 1", "Játékos 3", "Új becenév"]);
+    const membership = (await db.query<{ user_id: string }>("select user_id from public.players where id = $1", [rejoined.me_id])).rows[0];
+    expect(membership.user_id).toBe(users[1]);
+    // A korábbi név felszabadult; a meglévő játékosok sorrendje és azonosítója nem változott.
+    await rpc(3, "join_game", { p_game_id: gameId, p_nickname: "Játékos 2" });
+    expect((await state()).players.map((p) => p.join_order)).toEqual([1, 3, 4, 5]);
+    expect((await db.query("select * from auth.users")).rows).toHaveLength(users.length);
+  });
+
+  it("az ismételt kilépés hatástalan, az elkésett kérés nem törli az új tagságot", async () => {
+    const gameId = await join();
+    const args = { p_game_id: gameId, p_player_id: (await state()).me_id };
+    const before = await state();
+    await Promise.all([rpc(0, "leave_lobby", args), rpc(0, "leave_lobby", args)]);
+    const left = await state();
+    expect(left.revision).toBe(before.revision + 1);
+    expect(left.player_count).toBe(1);
+    await rpc(0, "join_game", { p_game_id: gameId, p_nickname: "Visszatérő" });
+    const rejoined = await state();
+    await rpc(0, "leave_lobby", args);
+    expect(await state()).toEqual(rejoined);
+  });
+
+  it("az utolsó játékosok párhuzamos kilépése után is használható ugyanaz az üres lobby", async () => {
+    const gameId = await join();
+    const before = await state();
+    await Promise.all(before.players.map((player, actor) => rpc(actor, "leave_lobby", { p_game_id: gameId, p_player_id: player.id })));
+    const empty = await state();
+    expect(empty.game.id).toBe(gameId);
+    expect(empty.game.status).toBe("lobby");
+    expect(empty.player_count).toBe(0);
+    expect(empty.players).toEqual([]);
+    expect(empty.me_id).toBeNull();
+    expect(empty.revision).toBe(before.revision + 2);
+    await rpc(7, "join_game", { p_game_id: gameId, p_nickname: "Új első" });
+    expect((await state(7)).players[0].join_order).toBe(1);
+    expect((await db.query("select * from public.games")).rows).toHaveLength(1);
+  });
+
+  it("bármely résztvevő új üres lobbyt nyithat, mindenki újracsatlakozhat és indíthat", async () => {
+    const gameId = await join(3);
+    const before = await state();
+    const oldMembers = await history(gameId);
+    const nextId = await rpc<string>(2, "reset_lobby", { p_game_id: gameId });
+    expect(nextId).not.toBe(gameId);
+    for (let actor = 0; actor < 3; actor++) {
+      const current = await state(actor);
+      expect(current.game).toEqual({ id: nextId, status: "lobby", starting_player_id: null, current_player_id: null, winner_id: null, end_reason: null, round_number: 0 });
+      expect(current.me_id).toBeNull();
+      expect(current.players).toEqual([]);
+      expect(current.player_count).toBe(0);
+      expect(current.my_cards).toEqual([]);
+      expect(current.initial_card).toBeNull();
+      expect(current.current_round).toBeNull();
+      expect(current.latest_result).toBeNull();
+      expect(current.cancellation).toBeNull();
+      expect(current.revision).toBe(before.revision + 1);
+    }
+    expect(await history(gameId)).toEqual(oldMembers);
+    await rpc(0, "join_game", { p_game_id: nextId, p_nickname: "Bence" });
+    await rpc(1, "join_game", { p_game_id: nextId, p_nickname: "Lili" });
+    await rpc(1, "start_game", { p_game_id: nextId });
+    const started = await state();
+    expect(started.game.status).toBe("initial_rating");
+    expect(started.initial_card!.order).toBe(1);
+    expect(started.players.every((p) => p.card_count === 3 && p.initial_rated === 0)).toBe(true);
+    expect((await db.query("select * from public.player_cards where game_id = $1 and score_tenths is null", [nextId])).rows).toHaveLength(6);
+  });
+
+  it("két párhuzamos reset egy lobbyt hoz létre, a régi kérések nem írják felül az új állapotot", async () => {
+    const gameId = await join(3);
+    const before = await state();
+    const args = { p_game_id: gameId };
+    const [first, second] = await Promise.all([rpc<string>(0, "reset_lobby", args), rpc<string>(1, "reset_lobby", args)]);
+    expect(first).toBe(second);
+    expect((await state()).revision).toBe(before.revision + 1);
+    expect((await db.query("select * from public.games")).rows).toHaveLength(2);
+    await join();
+    const fresh = await state();
+    await rpc(2, "reset_lobby", args);
+    await expect(rpc(0, "leave_lobby", { ...args, p_player_id: before.me_id })).rejects.toThrow("másik lobby");
+    await expect(rpc(0, "join_game", { ...args, p_nickname: "Elkésett" })).rejects.toThrow("Új parti");
+    await expect(rpc(0, "start_game", args)).rejects.toThrow("másik parti");
+    expect(await state()).toEqual(fresh);
+    await rpc(1, "start_game", { p_game_id: first });
+    const started = await state();
+    expect(await rpc(0, "reset_lobby", args)).toBe(first);
+    expect(await state()).toEqual(started);
+    await rpc(0, "cancel_game", { p_game_id: first });
+    const afterCancellation = await state();
+    expect(await rpc(1, "reset_lobby", args)).toBe(first);
+    expect(await state()).toEqual(afterCancellation);
+  });
+
+  it("nem enged más tagságát törölni, kívülállónak resetelni vagy azonosítás nélkül hívni", async () => {
+    const gameId = await join(3);
+    const before = await state();
+    await expect(rpc(0, "leave_lobby", { p_game_id: gameId, p_player_id: before.players[1].id })).rejects.toThrow("saját lobbytagságodat");
+    await expect(rpc(7, "leave_lobby", { p_game_id: gameId, p_player_id: before.me_id })).rejects.toThrow("saját lobbytagságodat");
+    await expect(rpc(7, "reset_lobby", { p_game_id: gameId })).rejects.toThrow("résztvevője");
+    await expect(rpc(0, "leave_lobby", { p_game_id: gameId, p_player_id: null })).rejects.toThrow("Érvénytelen");
+    for (const [sql, values] of [
+      ["select public.leave_lobby($1, $2)", [gameId, before.me_id]],
+      ["select public.reset_lobby($1)", [gameId]],
+    ] as const) {
+      await expect(db.transaction(async (tx) => {
+        await tx.exec("set local role anon");
+        await tx.query(sql, [...values]);
+      })).rejects.toMatchObject({ code: "42501" });
+      await expect(db.transaction(async (tx) => {
+        await tx.exec("set local role authenticated");
+        await tx.query(sql, [...values]);
+      })).rejects.toThrow("Azonosítás szükséges");
+    }
+    expect(await state()).toEqual(before);
+  });
+
+  it.each(["initial_rating", "playing", "finished"])("nem enged kilépést vagy resetet elindult partinál: %s", async (status) => {
+    if (status === "initial_rating") {
+      const gameId = await join(3);
+      await rpc(0, "start_game", { p_game_id: gameId });
+    } else {
+      await boot(3);
+      if (status === "finished") await db.exec("update public.games set status = 'finished', end_reason = 'exhausted', finished_at = now(), current_player_id = null");
+    }
+    const before = await state();
+    const oldData = await history(before.game.id);
+    await expect(rpc(0, "leave_lobby", { p_game_id: before.game.id, p_player_id: before.me_id })).rejects.toThrow("csak a lobbyból");
+    await expect(rpc(1, "reset_lobby", { p_game_id: before.game.id })).rejects.toThrow("csak lobby állapotban");
+    expect(await state()).toEqual(before);
+    expect(await history(before.game.id)).toEqual(oldData);
+  });
+
+  it.each(["leave_lobby", "reset_lobby"] as const)("indítással párhuzamosan is konzisztens marad: %s", async (operation) => {
+    const gameId = await join(3);
+    const before = await state();
+    const args = operation === "leave_lobby" ? { p_game_id: gameId, p_player_id: before.players[1].id } : { p_game_id: gameId };
+    const [action, start] = await Promise.allSettled([rpc(1, operation, args), rpc(0, "start_game", { p_game_id: gameId })]);
+    const current = await state();
+    if (operation === "reset_lobby" && action.status === "fulfilled") {
+      expect(start.status).toBe("rejected");
+      expect(current.game.status).toBe("lobby");
+      expect(current.player_count).toBe(0);
+      expect(current.game.id).not.toBe(gameId);
+    } else {
+      expect(start.status).toBe("fulfilled");
+      expect(current.game.status).toBe("initial_rating");
+      expect(current.player_count).toBe(operation === "leave_lobby" && action.status === "fulfilled" ? 2 : 3);
+      expect(current.players.every((p) => p.card_count === 3)).toBe(true);
+      if (operation === "reset_lobby") expect(action.status).toBe("rejected");
+    }
+    expect((await db.query("select * from public.player_cards where game_id = $1", [current.game.id])).rows).toHaveLength(current.player_count * 3);
+  });
+
+  it("hiba esetén a tagságtörlés és az új lobby létrehozása is teljesen visszagördül", async () => {
+    const gameId = await join(3);
+    const before = await state();
+    const oldData = await history(gameId);
+    await db.exec(`
+      create function private.reject_test_lobby_action() returns trigger language plpgsql as $$
+      begin raise exception 'Teszt: sikertelen lobbyfrissítés'; end;
+      $$;
+      create trigger reject_test_lobby_action before update on public.room_state
+        for each row execute function private.reject_test_lobby_action();
+    `);
+    try {
+      await expect(rpc(0, "leave_lobby", { p_game_id: gameId, p_player_id: before.me_id })).rejects.toThrow("sikertelen lobbyfrissítés");
+      expect(await state()).toEqual(before);
+      expect(await history(gameId)).toEqual(oldData);
+      await expect(rpc(1, "reset_lobby", { p_game_id: gameId })).rejects.toThrow("sikertelen lobbyfrissítés");
+      expect(await state()).toEqual(before);
+      expect((await db.query("select * from public.games")).rows).toHaveLength(1);
+    } finally {
+      await db.exec("drop trigger reject_test_lobby_action on public.room_state; drop function private.reject_test_lobby_action()");
+    }
+  });
+
+  it("megszakítás után is lehet kilépni és resetelni, a régi pontszámok és idegen kulcsok megmaradnak", async () => {
+    const played = await finish(await boot(3));
+    const oldData = await history(played.game.id);
+    const eventData = (await db.query("select * from public.events order by id")).rows;
+    const lobbyId = await rpc<string>(0, "cancel_game", { p_game_id: played.game.id });
+    const cancelledGame = (await db.query("select * from public.games where id = $1", [played.game.id])).rows;
+    await rpc(0, "leave_lobby", { p_game_id: lobbyId, p_player_id: (await state()).me_id });
+    expect((await state()).me_id).toBeNull();
+    await rpc(1, "reset_lobby", { p_game_id: lobbyId });
+    expect((await state()).player_count).toBe(0);
+    expect(await history(played.game.id)).toEqual(oldData);
+    expect((await db.query("select * from public.games where id = $1", [played.game.id])).rows).toEqual(cancelledGame);
+    expect((await db.query("select * from public.events order by id")).rows).toEqual(eventData);
+    const nextId = await join(3);
+    await rpc(2, "start_game", { p_game_id: nextId });
+    expect((await state()).players.every((p) => p.card_count === 3 && p.initial_rated === 0)).toBe(true);
+  });
+
+  it("a lobby-migráció meglévő lobbyt, megszakított partit és eseményeket sem változtat meg", async () => {
+    const legacy = new PGlite();
+    try {
+      await legacy.exec(authSchema);
+      for (const file of ["202610200001_game.sql", "202610230001_cancel_game.sql"]) {
+        await legacy.exec(await readFile(new URL(`../supabase/migrations/${file}`, import.meta.url), "utf8"));
+      }
+      await legacy.query("insert into auth.users (id) select unnest($1::uuid[])", [users]);
+      await legacy.query(`insert into public.events (title, description, active)
+        select title, description, active from jsonb_to_recordset($1::jsonb) as e(title text, description text, active boolean)`, [JSON.stringify(events)]);
+      const gameId = (await rpc<GameState>(0, "get_game_state", {}, legacy)).game.id;
+      for (let actor = 0; actor < 2; actor++) await rpc(actor, "join_game", { p_game_id: gameId, p_nickname: `Régi ${actor}` }, legacy);
+      await rpc(0, "start_game", { p_game_id: gameId }, legacy);
+      const initial = await rpc<GameState>(0, "get_game_state", {}, legacy);
+      await rpc(0, "rate_initial_card", { p_game_id: gameId, p_card_id: initial.initial_card!.id, p_score: 73 }, legacy);
+      await rpc(1, "cancel_game", { p_game_id: gameId }, legacy);
+      const snapshot = await rpc<GameState>(0, "get_game_state", {}, legacy);
+      const tables = ["games", "players", "events", "player_cards", "rounds", "ratings", "room_state"];
+      const stored = () => Promise.all(tables.map(async (table) => (
+        await legacy.query(`select to_jsonb(t) - 'reset_from_game_id' as data from public.${table} t order by to_jsonb(t)::text`)
+      ).rows));
+      const before = await stored();
+      await legacy.exec(await readFile(new URL("../supabase/migrations/202610240001_lobby_actions.sql", import.meta.url), "utf8"));
+      expect(await stored()).toEqual(before);
+      expect(await rpc<GameState>(0, "get_game_state", {}, legacy)).toEqual(snapshot);
+      await rpc(0, "leave_lobby", { p_game_id: snapshot.game.id, p_player_id: snapshot.me_id }, legacy);
+      await rpc(1, "reset_lobby", { p_game_id: snapshot.game.id }, legacy);
+      expect((await rpc<GameState>(0, "get_game_state", {}, legacy)).player_count).toBe(0);
+    } finally {
+      await legacy.close();
+    }
+  });
+});
+
 describe("Titkosság és jogosultságok", () => {
   it("a nyitott kör sem más pontszámait, sem az elkészült átlagot nem adja vissza", async () => {
     const s = await boot(6);

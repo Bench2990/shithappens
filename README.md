@@ -51,11 +51,14 @@ Nem kell manuálisan Auth-felhasználókat létrehoznod. A kliens névtelen munk
 ```text
 supabase/migrations/202610200001_game.sql
 supabase/migrations/202610230001_cancel_game.sql
+supabase/migrations/202610240001_lobby_actions.sql
 ```
 
 Az első migráció hozza létre az összes táblát, indexet, megszorítást, RLS-t, RPC-t, az első üres lobbit és a Realtime publikációhoz tartozó beállítást. Üres projektre készült, nem többször futtatandó seed. Hibánál ne csak a kijelölt fél fájlt futtasd.
 
-**Már működő, adatokat tartalmazó adatbázisnál kizárólag az új `202610230001_cancel_game.sql` migrációt futtasd**, az új frontend telepítése előtt. Ez egy tranzakcióban bővíti az `end_reason` CHECK constraintet a `cancelled` értékkel, hozzáadja a megszakítás metaadatait és a jogosultságellenőrzött `cancel_game` RPC-t, illetve frissíti az állapotlekérést. Nem töröl játékot, játékost, kártyát, kört, értékelést vagy eseményt; nem kell újra seedelni, és nem kell `db reset`. A korábbi migráció változatlan marad.
+**Már működő, játékmegszakítással rendelkező adatbázisnál kizárólag az új `supabase/migrations/202610240001_lobby_actions.sql` fájl teljes tartalmát futtasd a Supabase SQL Editorban**, adminisztrátori / `postgres` szerepkörben, az új frontend telepítése előtt. Ez egy tranzakcióban hozzáadja a lobbycserék egyedi előzményhivatkozását, valamint a jogosultságellenőrzött `leave_lobby` és `reset_lobby` RPC-ket. Maga a migráció egyetlen adatsort sem töröl vagy módosít. Nem kell újra seedelni, `db reset` vagy a korábbi migrációk újrafuttatása.
+
+Ha a játékmegszakítás migrációja még nincs telepítve, előbb a `202610230001_cancel_game.sql` fájlt futtasd. Ez bővíti az `end_reason` CHECK constraintet a `cancelled` értékkel, és hozzáadja a megszakítás metaadatait, RPC-jét és állapotlekérését. A két korábbi migráció változatlan marad.
 
 ### Supabase CLI-vel
 
@@ -144,6 +147,8 @@ A megszerzett esemény az adott partiban foglalt; a hibásan elhelyezett rögtö
 
 A `NEXT_PUBLIC_*` értékek buildidőben épülnek a klienscsomagba. Változtatásuk után helyben szerver-újraindítás, Vercelen új deployment kell.
 
+A lobby elhagyásához és új lobby létrehozásához **nem kell új vagy módosított Vercel-környezeti változó**. A meglévő két publikus Supabase-beállítás elegendő; csak az új SQL-migráció és a friss frontend telepítése szükséges.
+
 ## 6. Lokális használat és telefonok
 
 ```sh
@@ -153,6 +158,15 @@ npm run dev
 A szerver `0.0.0.0:3000` címen figyel. Azonos Wi-Fi-n a telefonokon a gép LAN-címét nyisd meg, pl. `http://192.168.1.20:3000`. Ha a Windows tűzfal kérdezi, a magánhálózaton engedélyezd a Node elérését. A Supabase ehhez a felhőben futhat; helyi Supabase esetén a projekt URL-jében is telefonról elérhető LAN-cím kell, nem `127.0.0.1`.
 
 Minden játékosnak külön böngészőprofil vagy külön telefon kell. Ugyanannak a böngészőprofilnak két lapja **ugyanaz a játékos**. Újratöltés, rövid kapcsolatvesztés vagy a telefon képernyőjének lezárása nem törli a lapokat. Ne töröld a webhelyadatokat, és ne válts inkognitóból normál módra: a névtelen Auth-azonosító elvesztésével a régi játékos nem állítható vissza pusztán a becenévvel.
+
+### Kilépés a lobbyból és új lobby létrehozása
+
+A csatlakozott játékosok a **Játék indítása** alatt két mobilbarát gombot látnak:
+
+- **Kilépés a lobbiból:** csak a saját, aktuális lobbytagság szűnik meg. A többiek bent maradnak, a listájuk automatikusan frissül, a kilépő pedig visszakerül a becenévmezőhöz. Az anonim Auth-munkamenet megmarad; az előző név kényelmi tippként előre kitöltve maradhat, de szabadon átírható. Az utolsó játékos kilépése sem szünteti meg a lobbyt.
+- **Új lobby létrehozása:** megerősítő ablak után új, üres közös lobby jön létre, és mindenki automatikusan visszakerül a csatlakozási képernyőre. Senki nem kerül át automatikusan. A **Mégse** és az Escape nem módosít semmit. Az új lobbyban újracsatlakozás után bárki indíthat.
+
+Mindkét művelet kizárólag lobbyban érhető el és szerveroldalon is csak ott engedélyezett. Elindult partinál továbbra is a **Játék megszakítása** használható. A lobbycsere nem törli az előző lobbyt vagy a korábbi befejezett/megszakított partik adatait; egyedül a közös `room_state.current_game_id` mutató vált. A kilépés csak a saját, még játékadatokkal nem rendelkező tagságsort törli, nem Auth-felhasználót.
 
 ### Folyamatban lévő parti megszakítása
 
@@ -190,6 +204,8 @@ Lefedettség: pontos átlag és félérték-kerekítés; helyes/hibás elhelyez�
 
 A megszakítás tesztjei ellenőrzik a közös lobbyt és a megőrzött neveket, a kezdőpontozást és várakozást, az aktív játékos és a pontozó jogosultságát, a kívülállók kizárását, az ismételt/párhuzamos kéréseket, a tiszta háromlapos új partit, a késő régi kérések elutasítását, a hibánál teljes tranzakció-visszagördítést és a már adatokat tartalmazó régi sémára alkalmazott új migrációt.
 
+A lobbytesztek lefedik a három játékosból egy kilépését, az új beceneves visszatérést, az utolsó játékos kilépését, az üres lobbycserét és új játék indítását, a jogosultságokat és az elindult parti védelmét, a dupla és késő kéréseket, az indítással párhuzamos műveleteket, a tranzakció-visszagördítést, a megszakítás utáni idegen kulcsok épségét és az új migráció adatmegőrzését.
+
 A PGlite egy adatbázis-kapcsolatot sorosít: az idempotenciát és a SQL-logikát ellenőrzi, **nem helyettesíti a külön PostgreSQL-kapcsolatok valós zárversenyét vagy a Supabase Realtime szerverét**.
 
 ### Mobilböngészős végponttól végpontig teszt
@@ -202,6 +218,8 @@ npm run test:browser
 Két külön, mobilméretű Chromium-profilban ellenőrzi a lobby frissülését, a csúszkát, a kezdőpontozást, a gombok feltételeit, a pozíció megőrzését újratöltéskor, az eredmény felfedését, az offline visszatérést, a későn érkezők kizárását, a kilenclapos kártyasor tíz választható helyét, a győzelmi képernyőt és az új partit. A játékmotor itt is a valódi SQL-migráció PGlite-on; **csak az Auth/HTTP/WebSocket szállítás tesztadapteres**, nem éles Supabase. A teszt automatikusan külön Next.js szervert indít a 3100-as porton, tesztkörnyezeti változókkal. A `test-results/` mappába mobil- és asztali képernyőképeket ír.
 
 A külön megszakítási böngészőteszt 320 px széles telefonokon ellenőrzi a megerősítő ablakot, a fókuszt és az Escape/Mégse működését, a kezdőpontozás és a normál kör megszakítását, a másik eszköz automatikus lobbyváltását (akkor is, ha ott is nyitva van az ablak), a megőrzött neveket, az új kezdőlapokat és a két egyszerre elküldött megszakítást.
+
+A lobby-böngészőteszt három 320 px széles telefonprofilt használ. Frissítés nélkül ellenőrzi a kilépést és az új beceneves visszacsatlakozást, a megerősítést és a mindenkit érintő lobbycserét, az új játékot és megszakítást, a két egyidejű resetet, az utolsó játékos kilépését, valamint azt, hogy nem történik Auth-kijelentkezés vagy újabb anonim regisztráció.
 
 ### Opcionális élő, hatklienses Supabase-teszt
 
@@ -220,6 +238,9 @@ Ez hat valódi névtelen felhasználót és hat Realtime-feliratkozást indít. 
 ### Kézi telefonos próba
 
 - Két–hat külön telefon/profil: csatlakozás után mindenkinél rögtön frissül a lobby.
+- Három csatlakozott játékosból az egyik lépjen ki: csak nála jelenjen meg újra a becenévmező, a másik kettő maradjon a lobbyban. A kilépő más névvel csatlakozzon vissza.
+- Az **Új lobby létrehozása** ablakban először válaszd a **Mégse** gombot: a névsor maradjon meg. Megerősítéskor mindenki kerüljön a csatlakozási képernyőre, üres lobbyval; újracsatlakozás után a másik játékos indítson partit.
+- Két telefonról egyszerre hozzatok létre új lobbyt; csak egy új közös lobby legyen. Ha mindenki kilép, utána is lehessen csatlakozni.
 - Két játékos egyszerre indít: mindenki ugyanazt az egy partit látja.
 - Mindenki egyenként pontozza a három kezdőlapot; a kész játékosok a többiekre várnak.
 - Az aktív játékos már pontozás közben helyet választ, a véglegesítés az utolsó értékelésig tiltott.
@@ -246,6 +267,8 @@ Ez hat valódi névtelen felhasználót és hat Realtime-feliratkozást indít. 
 - Nincs automatikus játékostörlés, automatikus partiindítás vagy távolléti időkorlát. Egy hosszabban eltűnő résztvevőre vár a társaság; ezt szándékosan nem helyettesíti bot, automatikus pontozás vagy kihagyás. Szükség esetén bármely résztvevő megszakíthatja a partit.
 - Győzelem vagy paklielfogyás után a kézzel megnyitott friss lobby csak a kezdeményezőt tartalmazza; a többiek újra csatlakoznak. **Megszakításkor viszont minden résztvevőt automatikusan átmásolunk**, azonos Auth-felhasználóval, becenévvel és sorrenddel, de új, partihoz kötött játékosazonosítóval. Mindkét esetben megmarad minden korábbi játék, lap, kör, pontozás és az eseménygyűjtemény.
 - A `cancel_game` a többi RPC-vel közös `room_state` sorzár alatt, egy tranzakcióban archivál és vált lobbyt. A `games.cancelled_from_game_id` egyedi hivatkozása és a már megszakított kérés hatástalan ismétlése kizárja a dupla lobbyt; régi játékazonosítók nem írhatnak az új partiba. A Realtime-változásjelző továbbra sem tartalmaz becenevet vagy más játékadatot.
+- A `leave_lobby(p_game_id, p_player_id)` csak az `auth.uid()` saját, aktuális lobbytagságát törli, az összes többi RPC-vel közös sorzár alatt. A tagságazonosító az újracsatlakozás után megismételt régi kilépést is hatástalanná teszi. Nincs Auth-kijelentkezés, kaszkádos törlés vagy történeti játékostörlés.
+- A `reset_lobby(p_game_id)` csak a jelenlegi lobby tagjának nyit új, üres lobbyt. A `games.reset_from_game_id` egyedi hivatkozása és a korábbi kérés hatástalan ismétlése kizárja a dupla lobbyt. A régi lobby és névsora előzményként megmarad; csak a `room_state` által kijelölt lobby aktív. Késő régi kérés nem nullázhatja az új lobbyt vagy partit.
 - A névtelen Auth-felhasználókat játék közben ne töröld vagy takarítsd automatikusan; a történeti `players` sorok hivatkoznak rájuk. A kulcs és a kliensoldali becenévtipp nem helyettesíti az Auth-munkamenetet.
 - Nincs adminfelület. Eseményt a Dashboard Table Editorban vagy importtal szerkeszthetsz; a már hivatkozott eseményeket törlés helyett `active = false` értékkel kapcsold ki. A mintafájl újraimportja az abban szereplő címeket és aktív állapotukat is frissíti.
 

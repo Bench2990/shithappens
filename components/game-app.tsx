@@ -9,6 +9,7 @@ import { CancelGame } from "./cancel-game";
 import { EventCard } from "./event-card";
 import { Hand } from "./hand";
 import { JoinScreen } from "./join-screen";
+import { LobbyActions } from "./lobby-actions";
 import { Players } from "./players";
 import { RoundResult } from "./round-result";
 import { ScoreForm } from "./score-form";
@@ -42,7 +43,7 @@ function Setup() {
   return <Shell><section className="panel mx-auto max-w-xl p-6 sm:p-8"><span className="badge mb-5 bg-lilac">Még egy kis előkészület</span><h1 className="text-3xl font-black tracking-tight">Az asztal készen áll.<br />Kösd hozzá a Supabase-t.</h1><p className="mt-4 text-sm leading-relaxed text-muted">Ez nem szimulált játék: valódi adatbázis és névtelen belépés szükséges hozzá.</p><ol className="mt-6 list-decimal space-y-3 pl-5 text-sm leading-relaxed"><li>Másold a <code>.env.example</code> fájlt <code>.env.local</code> néven.</li><li>Add meg a <code className="break-all">NEXT_PUBLIC_SUPABASE_URL</code> és <code className="break-all">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> értékét.</li><li>Engedélyezd az Anonymous Authenticationt, futtasd az SQL-migrációt, majd importáld az eseményeket.</li><li>Indítsd újra a fejlesztői szervert.</li></ol><p className="mt-6 border-t border-line pt-5 text-xs leading-relaxed text-muted">A pontos lépések és a Vercel telepítése a projekt magyar README.md fájljában találhatók. A service role kulcs nem kerülhet a böngészőbe.</p></section></Shell>;
 }
 
-function Lobby({ state, act, disabled, pending }: { state: GameState; act: Act; disabled: boolean; pending: GameAction["type"] | null }) {
+function Lobby({ state, act, disabled, pending, error }: { state: GameState; act: Act; disabled: boolean; pending: GameAction["type"] | null; error: string | null }) {
   const enoughEvents = state.events_available >= state.events_required;
   return <div className="enter mx-auto max-w-2xl">
     {state.cancellation && <p role="status" className="mb-5 rounded-2xl bg-lilac/25 p-4 text-sm leading-relaxed">A partit megszakította: {state.cancellation.nickname}. Visszatértetek a lobbyba.</p>}
@@ -52,6 +53,7 @@ function Lobby({ state, act, disabled, pending }: { state: GameState; act: Act; 
     {!enoughEvents && <p role="status" className="mt-5 rounded-xl bg-coral/35 p-4 text-sm leading-relaxed">Ehhez a létszámhoz {state.events_required} aktív esemény kell, most {state.events_available} van. Töltsetek fel továbbiakat a Supabase-ba.</p>}
     <Button className="mt-6 w-full" onClick={() => { void act({ type: "start", gameId: state.game.id }); }} disabled={disabled || state.player_count < 2 || !enoughEvents} busy={pending === "start"}>Játék indítása<ArrowRight className="size-4" aria-hidden="true" /></Button>
     <p className="mt-3 text-center text-xs leading-relaxed text-muted">{state.player_count < 2 ? "Legalább még egy játékosra várunk." : "Indításkor lezárjuk a játékoslistát, és kisorsoljuk a kezdőt."}</p>
+    {state.me_id && <LobbyActions key={state.me_id} gameId={state.game.id} playerId={state.me_id} act={act} disabled={disabled} pending={pending} error={error} />}
   </div>;
 }
 
@@ -135,7 +137,7 @@ export function GameApp() {
     {state?.me_id && (state.game.status === "initial_rating" || state.game.status === "playing") && <CancelGame key={state.game.id} gameId={state.game.id} act={act} disabled={disabled} pending={pending} error={game.error} />}
     {!state ? <div className="flex min-h-72 flex-col items-center justify-center gap-4 text-center" role="status"><LoaderCircle className="size-8 animate-spin text-[#8061af]" aria-hidden="true" /><h1 className="text-xl font-black">Visszatérés az asztalhoz...</h1><p className="text-sm text-muted">A böngésződ megőrzi a névtelen azonosítódat.</p></div>
       : !state.me_id ? <JoinScreen key={state.game.id} state={state} disabled={disabled} busy={pending === "join"} onJoin={(name) => { void act({ type: "join", gameId: state.game.id, nickname: name }); }} />
-        : screenProps && state.game.status === "lobby" ? <Lobby {...screenProps} />
+        : screenProps && state.game.status === "lobby" ? <Lobby {...screenProps} error={game.error} />
           : screenProps && state.game.status === "initial_rating" ? <InitialRating {...screenProps} />
             : screenProps && state.game.status === "playing" ? <Playing {...screenProps} />
               : screenProps && <Finished {...screenProps} />}

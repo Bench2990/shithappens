@@ -16,6 +16,8 @@ export async function executeAction(action: GameAction): Promise<void> {
   const result = await (() => {
     switch (action.type) {
       case "join": return client.rpc("join_game", { p_game_id, p_nickname: action.nickname });
+      case "leave": return client.rpc("leave_lobby", { p_game_id, p_player_id: action.playerId });
+      case "reset": return client.rpc("reset_lobby", { p_game_id });
       case "start": return client.rpc("start_game", { p_game_id });
       case "initial": return client.rpc("rate_initial_card", { p_game_id, p_card_id: action.cardId, p_score: action.score });
       case "rate": return client.rpc("rate_round", { p_game_id, p_round_id: action.roundId, p_score: action.score });

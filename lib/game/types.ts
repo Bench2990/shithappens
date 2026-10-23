@@ -69,6 +69,8 @@ export interface GameState {
 
 export type GameAction =
   | { type: "join"; gameId: string; nickname: string }
+  | { type: "leave"; gameId: string; playerId: string }
+  | { type: "reset"; gameId: string }
   | { type: "start"; gameId: string }
   | { type: "initial"; gameId: string; cardId: string; score: number }
   | { type: "rate"; gameId: string; roundId: string; score: number }
